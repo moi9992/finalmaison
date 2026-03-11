@@ -20,6 +20,8 @@ if (isset($_GET['read_notif'])) {
     if ($notif) {
         if ($notif['type'] === 'topic_reply') {
             header('Location: /projet/forum/topic.php?id=' . $notif['reference_id']);
+        } elseif ($notif['type'] === 'report') {
+            header('Location: /projet/admin/reports.php');
         } else {
             header('Location: /projet/trade/trade.php?id=' . $notif['reference_id']);
         }
@@ -30,6 +32,21 @@ if (isset($_GET['read_notif'])) {
 // Marquer toutes les notifs comme lues
 if (isset($_GET['read_all_notifs'])) {
     $pdo->prepare("UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0")->execute([$userId]);
+    header('Location: messages.php');
+    exit;
+}
+
+// Supprimer une notif
+if (isset($_GET['delete_notif'])) {
+    $notifId = (int)$_GET['delete_notif'];
+    $pdo->prepare("DELETE FROM notifications WHERE id = ? AND user_id = ?")->execute([$notifId, $userId]);
+    header('Location: messages.php');
+    exit;
+}
+
+// Supprimer toutes les notifs lues
+if (isset($_GET['delete_read_notifs'])) {
+    $pdo->prepare("DELETE FROM notifications WHERE user_id = ? AND is_read = 1")->execute([$userId]);
     header('Location: messages.php');
     exit;
 }
@@ -114,25 +131,45 @@ $conversations = $conversations->fetchAll();
                         <span class="badge bg-danger"><?= $unreadNotifCount ?></span>
                     <?php endif; ?>
                 </h5>
-                <?php if ($unreadNotifCount > 0): ?>
-                    <a href="?read_all_notifs=1" class="btn btn-sm btn-outline-secondary">Tout marquer comme lu</a>
-                <?php endif; ?>
+                <div class="d-flex gap-2">
+                    <?php if ($unreadNotifCount > 0): ?>
+                        <a href="?read_all_notifs=1" class="btn btn-sm btn-outline-secondary">Tout marquer comme lu</a>
+                    <?php endif; ?>
+                    <?php if (count($notifications) - $unreadNotifCount > 0): ?>
+                        <a href="?delete_read_notifs=1" class="btn btn-sm btn-outline-danger"
+                           onclick="return confirm('Supprimer toutes les notifications lues ?')">
+                            <i class="bi bi-trash me-1"></i>Supprimer les lues
+                        </a>
+                    <?php endif; ?>
+                </div>
             </div>
             <div class="list-group">
                 <?php foreach ($notifications as $notif): ?>
-                    <a href="?read_notif=<?= $notif['id'] ?>"
-                       class="list-group-item list-group-item-action py-3 <?= !$notif['is_read'] ? 'fw-bold' : '' ?>">
-                        <div class="d-flex justify-content-between align-items-center">
+                    <div class="list-group-item py-3 <?= !$notif['is_read'] ? 'fw-bold' : '' ?> d-flex justify-content-between align-items-center">
+                        <a href="?read_notif=<?= $notif['id'] ?>" class="text-decoration-none flex-grow-1">
                             <div>
-                                <i class="bi <?= $notif['type'] === 'topic_reply' ? 'bi-chat-dots' : 'bi-currency-exchange' ?> me-2"></i>
+                                <?php
+                                $notifIcon = match($notif['type']) {
+                                    'topic_reply' => 'bi-chat-dots',
+                                    'report'      => 'bi-flag-fill text-warning',
+                                    default       => 'bi-currency-exchange'
+                                };
+                                ?>
+                                <i class="bi <?= $notifIcon ?> me-2"></i>
                                 <?= htmlspecialchars($notif['message']) ?>
                                 <?php if (!$notif['is_read']): ?>
                                     <span class="badge bg-primary ms-1">Nouveau</span>
                                 <?php endif; ?>
                             </div>
                             <small class="text-muted"><?= date('d/m/Y à H:i', strtotime($notif['created_at'])) ?></small>
-                        </div>
-                    </a>
+                        </a>
+                        <?php if ($notif['is_read']): ?>
+                            <a href="?delete_notif=<?= $notif['id'] ?>" class="btn btn-sm btn-outline-danger ms-2"
+                               title="Supprimer" onclick="return confirm('Supprimer cette notification ?')">
+                                <i class="bi bi-trash"></i>
+                            </a>
+                        <?php endif; ?>
+                    </div>
                 <?php endforeach; ?>
             </div>
         </div>

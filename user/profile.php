@@ -21,8 +21,30 @@ if (!$user) {
 
 $isOwnProfile = isset($_SESSION['user']['id']) && $_SESSION['user']['id'] == $profileId;
 
+// Signalement d'un user
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['report_user']) && !$isOwnProfile && isset($_SESSION['user']['id'])) {
+    $reason = trim($_POST['report_reason'] ?? '');
+    if (!empty($reason)) {
+        $alreadyReported = $pdo->prepare("SELECT COUNT(*) FROM reports WHERE reporter_id = ? AND type = 'user' AND target_id = ? AND status = 'pending'");
+        $alreadyReported->execute([$_SESSION['user']['id'], $profileId]);
+        if ($alreadyReported->fetchColumn() == 0) {
+            $pdo->prepare("INSERT INTO reports (reporter_id, type, target_id, reason) VALUES (?, 'user', ?, ?)")
+                ->execute([$_SESSION['user']['id'], $profileId, $reason]);
+
+            $staff = $pdo->prepare("SELECT id FROM users WHERE role IN ('moderator', 'admin') AND id != ?");
+            $staff->execute([$_SESSION['user']['id']]);
+            $notifMsg = htmlspecialchars($_SESSION['user']['login']) . ' a signalé le profil de ' . $user['username'];
+            $notifStmt = $pdo->prepare("INSERT INTO notifications (user_id, from_user_id, type, reference_id, message) VALUES (?, ?, 'report', ?, ?)");
+            foreach ($staff as $s) {
+                $notifStmt->execute([$s['id'], $_SESSION['user']['id'], $profileId, $notifMsg]);
+            }
+        }
+        $success = "Signalement envoyé aux modérateurs. Merci !";
+    }
+}
+
 // Mise à jour de la bio (son propre profil uniquement)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isOwnProfile) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isOwnProfile && isset($_POST['bio'])) {
     $bio = trim($_POST['bio'] ?? '');
     $pdo->prepare("UPDATE users SET bio = ? WHERE id = ?")->execute([$bio, $profileId]);
     $user['bio'] = $bio;
@@ -52,6 +74,17 @@ $repStats = $pdo->prepare("
 ");
 $repStats->execute([$profileId]);
 $repStats = $repStats->fetch();
+
+// Derniers avis de réputation reçus
+$lastReps = $pdo->prepare("
+    SELECT r.*, u.username AS from_username
+    FROM reputation r
+    JOIN users u ON r.from_user_id = u.id
+    WHERE r.to_user_id = ?
+    ORDER BY r.created_at DESC LIMIT 5
+");
+$lastReps->execute([$profileId]);
+$lastReps = $lastReps->fetchAll();
 
 // Dernières annonces
 $lastTrades = $pdo->prepare("
@@ -100,13 +133,13 @@ $lastTopics = $lastTopics->fetchAll();
                     <div class="display-1 mb-2"><i class="bi bi-person-circle text-secondary"></i></div>
                     <h4 class="fw-bold mb-1"><?= htmlspecialchars($user['username']) ?></h4>
                     <?php
-                    $roleBadge = match($user['role']) {
-                        'admin'     => 'bg-danger',
-                        'moderator' => 'bg-warning text-dark',
-                        default     => 'bg-secondary'
+                    $roleLabel = match($user['role']) {
+                        'admin'     => ['bg-danger', 'Admin'],
+                        'moderator' => ['', 'Modérateur', 'background:var(--gold);color:#000;font-weight:700;'],
+                        default     => ['bg-secondary', 'User'],
                     };
                     ?>
-                    <span class="badge <?= $roleBadge ?> mb-2"><?= $user['role'] ?></span>
+                    <span class="badge <?= $roleLabel[0] ?> mb-2" <?= isset($roleLabel[2]) ? 'style="'.$roleLabel[2].'"' : '' ?>><?= $roleLabel[1] ?></span>
 
                     <?php if ($user['bio']): ?>
                         <p class="text-muted mt-2"><?= nl2br(htmlspecialchars($user['bio'])) ?></p>
@@ -118,6 +151,9 @@ $lastTopics = $lastTopics->fetchAll();
                         <div>
                             <div class="fw-bold text-warning fs-5"><?= number_format($user['forum_gold']) ?></div>
                             <small class="text-muted">Julientons</small>
+                            <?php if ($isOwnProfile): ?>
+                                <br><a href="/projet/user/transactions.php" class="small text-info"><i class="bi bi-clock-history"></i> Historique</a>
+                            <?php endif; ?>
                         </div>
                         <div>
                             <?php
@@ -173,11 +209,44 @@ $lastTopics = $lastTopics->fetchAll();
                 </ul>
             </div>
 
-            <!-- Bouton envoyer un message -->
+            <!-- Bouton envoyer un message + signaler -->
             <?php if (!$isOwnProfile && isset($_SESSION['isLog']) && $_SESSION['isLog']): ?>
-                <a href="/projet/user/conversation.php?user_id=<?= $profileId ?>" class="btn btn-primary w-100 mb-3">
+                <a href="/projet/user/conversation.php?user_id=<?= $profileId ?>" class="btn btn-primary w-100 mb-2">
                     <i class="bi bi-envelope me-1"></i>Envoyer un message
                 </a>
+                <button class="btn btn-outline-warning w-100 mb-3" data-bs-toggle="modal" data-bs-target="#reportUserModal">
+                    <i class="bi bi-flag me-1"></i>Signaler ce profil
+                </button>
+
+                <!-- Modal signalement user -->
+                <div class="modal fade" id="reportUserModal" tabindex="-1">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <form method="POST">
+                                <input type="hidden" name="report_user" value="1">
+                                <div class="modal-header">
+                                    <h5 class="modal-title"><i class="bi bi-flag me-2"></i>Signaler <?= htmlspecialchars($user['username']) ?></h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <label class="form-label fw-bold">Raison du signalement</label>
+                                    <select name="report_reason" class="form-select" required>
+                                        <option value="">-- Choisir --</option>
+                                        <option value="Spam ou publicité">Spam ou publicité</option>
+                                        <option value="Arnaque / scam">Arnaque / scam</option>
+                                        <option value="Comportement toxique / harcèlement">Comportement toxique / harcèlement</option>
+                                        <option value="Usurpation d'identité">Usurpation d'identité</option>
+                                        <option value="Autre">Autre</option>
+                                    </select>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                                    <button type="submit" class="btn btn-warning"><i class="bi bi-flag me-1"></i>Signaler</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
             <?php endif; ?>
 
             <!-- Modifier la bio (son propre profil) -->
@@ -235,6 +304,44 @@ $lastTopics = $lastTopics->fetchAll();
                         </a>
                     <?php endforeach; ?>
                 </div>
+            <?php endif; ?>
+
+            <!-- Derniers avis de réputation -->
+            <h5 class="fw-bold mb-3 mt-4"><i class="bi bi-star me-2"></i>Derniers avis reçus</h5>
+            <?php if (empty($lastReps)): ?>
+                <p class="text-muted">Aucun avis reçu.</p>
+            <?php else: ?>
+                <div class="list-group mb-3">
+                    <?php foreach ($lastReps as $rep): ?>
+                        <?php
+                        $repIcon = match($rep['rating']) {
+                            'positive' => ['bi-hand-thumbs-up-fill text-success', 'Positif'],
+                            'negative' => ['bi-hand-thumbs-down-fill text-danger', 'Négatif'],
+                            default    => ['bi-dash-circle-fill text-muted', 'Neutre']
+                        };
+                        ?>
+                        <div class="list-group-item">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <i class="bi <?= $repIcon[0] ?> me-1"></i>
+                                    <strong><?= $repIcon[1] ?></strong>
+                                    <span class="text-muted ms-1">par
+                                        <a href="/projet/user/profile.php?id=<?= $rep['from_user_id'] ?>">
+                                            <?= htmlspecialchars($rep['from_username']) ?>
+                                        </a>
+                                    </span>
+                                </div>
+                                <small class="text-muted"><?= date('d/m/Y', strtotime($rep['created_at'])) ?></small>
+                            </div>
+                            <?php if ($rep['comment']): ?>
+                                <p class="mb-0 mt-1 small"><?= htmlspecialchars($rep['comment']) ?></p>
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+                <a href="/projet/user/reputation.php?id=<?= $profileId ?>" class="btn btn-outline-secondary btn-sm w-100">
+                    Voir tous les avis (<?= ($repStats['positives'] ?? 0) + ($repStats['neutrals'] ?? 0) + ($repStats['negatives'] ?? 0) ?>)
+                </a>
             <?php endif; ?>
 
         </div>

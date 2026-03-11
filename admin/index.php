@@ -75,6 +75,12 @@ $lastUsers = $pdo->query("SELECT id, username, email, role, forum_gold, created_
         <a href="/projet/admin/categories.php" class="btn btn-info">
             <i class="bi bi-folder-plus me-1"></i>Catégories Forum
         </a>
+        <a href="/projet/admin/reports.php" class="btn btn-outline-danger">
+            <i class="bi bi-flag me-1"></i>Signalements
+        </a>
+        <a href="/projet/admin/messages.php" class="btn btn-outline-light">
+            <i class="bi bi-eye me-1"></i>Surveillance MP
+        </a>
     </div>
 
     <!-- Derniers inscrits -->

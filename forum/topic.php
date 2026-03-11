@@ -52,6 +52,20 @@ if (isset($_GET['delete_topic']) && $userId) {
     }
 }
 
+// Épingler / Désépingler
+if (isset($_GET['toggle_pin']) && $userId && in_array($userRole, ['moderator', 'admin'])) {
+    $pdo->prepare("UPDATE forum_topics SET is_pinned = NOT is_pinned WHERE id = ?")->execute([$id]);
+    header("Location: topic.php?id=$id");
+    exit;
+}
+
+// Verrouiller / Déverrouiller
+if (isset($_GET['toggle_lock']) && $userId && in_array($userRole, ['moderator', 'admin'])) {
+    $pdo->prepare("UPDATE forum_topics SET is_locked = NOT is_locked WHERE id = ?")->execute([$id]);
+    header("Location: topic.php?id=$id");
+    exit;
+}
+
 // Suppression d'un post
 if (isset($_GET['delete_post']) && $userId) {
     $postId = (int)$_GET['delete_post'];
@@ -65,8 +79,63 @@ if (isset($_GET['delete_post']) && $userId) {
     exit;
 }
 
+// Signalement d'un post
+if (isset($_GET['report_post']) && $userId && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['report_reason'])) {
+    $reportPostId = (int)$_GET['report_post'];
+    $reason = trim($_POST['report_reason']);
+    if (!empty($reason)) {
+        // Vérifier pas déjà signalé par ce user
+        $alreadyReported = $pdo->prepare("SELECT COUNT(*) FROM reports WHERE reporter_id = ? AND type = 'post' AND target_id = ? AND status = 'pending'");
+        $alreadyReported->execute([$userId, $reportPostId]);
+        if ($alreadyReported->fetchColumn() == 0) {
+            $pdo->prepare("INSERT INTO reports (reporter_id, type, target_id, reason) VALUES (?, 'post', ?, ?)")
+                ->execute([$userId, $reportPostId, $reason]);
+
+            // Notifier tous les modos et admins
+            $staff = $pdo->prepare("SELECT id FROM users WHERE role IN ('moderator', 'admin') AND id != ?");
+            $staff->execute([$userId]);
+            $postInfo2 = $pdo->prepare("SELECT u.username FROM forum_posts fp JOIN users u ON fp.user_id = u.id WHERE fp.id = ?");
+            $postInfo2->execute([$reportPostId]);
+            $postAuthor = $postInfo2->fetchColumn();
+            $notifMsg = htmlspecialchars($_SESSION['user']['login']) . ' a signalé un message de ' . $postAuthor . ' dans "' . mb_strimwidth($topic['title'], 0, 40, '...') . '"';
+            $notifStmt = $pdo->prepare("INSERT INTO notifications (user_id, from_user_id, type, reference_id, message) VALUES (?, ?, 'report', ?, ?)");
+            foreach ($staff as $s) {
+                $notifStmt->execute([$s['id'], $userId, $id, $notifMsg]);
+            }
+        }
+    }
+    header("Location: topic.php?id=$id&reported=1");
+    exit;
+}
+
+// Édition d'un post
+if (isset($_GET['edit_post']) && $_SERVER['REQUEST_METHOD'] === 'POST' && $userId && isset($_POST['edit_content'])) {
+    $editPostId = (int)$_GET['edit_post'];
+    $editContent = trim($_POST['edit_content']);
+    if (!empty($editContent)) {
+        $postOwner = $pdo->prepare("SELECT user_id FROM forum_posts WHERE id = ? AND topic_id = ?");
+        $postOwner->execute([$editPostId, $id]);
+        $postOwner = $postOwner->fetchColumn();
+        if ($postOwner == $userId) {
+            $pdo->prepare("UPDATE forum_posts SET content = ?, updated_at = NOW() WHERE id = ?")->execute([$editContent, $editPostId]);
+        }
+    }
+    header("Location: topic.php?id=$id");
+    exit;
+}
+
+// Édition du titre du topic
+if (isset($_POST['edit_title']) && $userId == $topic['user_id']) {
+    $newTitle = trim($_POST['edit_title']);
+    if (!empty($newTitle)) {
+        $pdo->prepare("UPDATE forum_topics SET title = ? WHERE id = ?")->execute([$newTitle, $id]);
+        header("Location: topic.php?id=$id");
+        exit;
+    }
+}
+
 // Soumission d'une réponse
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['isLog']) && $_SESSION['isLog'] && !$topic['is_locked']) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['isLog']) && $_SESSION['isLog'] && !$topic['is_locked'] && !isset($_POST['edit_content']) && !isset($_POST['edit_title'])) {
     $content = trim($_POST['content'] ?? '');
     if (!empty($content)) {
         $pdo->prepare("INSERT INTO forum_posts (topic_id, user_id, content) VALUES (?, ?, ?)")
@@ -133,6 +202,10 @@ $posts = $posts->fetchAll();
 
 <div class="container my-5">
 
+    <?php if (isset($_GET['reported'])): ?>
+        <div class="alert alert-success">Signalement envoyé aux modérateurs. Merci !</div>
+    <?php endif; ?>
+
     <!-- Fil d'ariane -->
     <nav aria-label="breadcrumb" class="mb-3">
         <ol class="breadcrumb">
@@ -143,13 +216,36 @@ $posts = $posts->fetchAll();
     </nav>
 
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2 class="fw-bold mb-0">
-            <?php if ($topic['is_pinned']): ?><span class="badge bg-warning text-dark me-2"><i class="bi bi-pin"></i></span><?php endif; ?>
-            <?php if ($topic['is_locked']): ?><span class="badge bg-secondary me-2"><i class="bi bi-lock"></i></span><?php endif; ?>
-            <?= htmlspecialchars($topic['title']) ?>
-        </h2>
+        <div class="flex-grow-1 me-3">
+            <?php if (isset($_GET['edit_title']) && $userId == $topic['user_id']): ?>
+                <form method="POST" class="d-flex gap-2">
+                    <input type="text" name="edit_title" class="form-control fw-bold fs-5" value="<?= htmlspecialchars($topic['title']) ?>" required>
+                    <button type="submit" class="btn btn-success btn-sm"><i class="bi bi-check-lg"></i></button>
+                    <a href="?id=<?= $id ?>" class="btn btn-secondary btn-sm"><i class="bi bi-x-lg"></i></a>
+                </form>
+            <?php else: ?>
+                <h2 class="fw-bold mb-0">
+                    <?php if ($topic['is_pinned']): ?><span class="badge bg-warning text-dark me-2"><i class="bi bi-pin"></i></span><?php endif; ?>
+                    <?php if ($topic['is_locked']): ?><span class="badge bg-secondary me-2"><i class="bi bi-lock"></i></span><?php endif; ?>
+                    <?= htmlspecialchars($topic['title']) ?>
+                    <?php if ($userId == $topic['user_id']): ?>
+                        <a href="?id=<?= $id ?>&edit_title=1" class="btn btn-sm btn-outline-secondary ms-2" title="Modifier le titre">
+                            <i class="bi bi-pencil"></i>
+                        </a>
+                    <?php endif; ?>
+                </h2>
+            <?php endif; ?>
+        </div>
         <div class="d-flex align-items-center gap-3">
             <small class="text-muted"><?= $topic['views'] ?> vues</small>
+            <?php if ($userId && in_array($userRole, ['moderator', 'admin'])): ?>
+                <a href="?id=<?= $id ?>&toggle_pin=1" class="btn btn-sm <?= $topic['is_pinned'] ? 'btn-warning' : 'btn-outline-warning' ?>" title="<?= $topic['is_pinned'] ? 'Désépingler' : 'Épingler' ?>">
+                    <i class="bi bi-pin"></i>
+                </a>
+                <a href="?id=<?= $id ?>&toggle_lock=1" class="btn btn-sm <?= $topic['is_locked'] ? 'btn-secondary' : 'btn-outline-secondary' ?>" title="<?= $topic['is_locked'] ? 'Déverrouiller' : 'Verrouiller' ?>">
+                    <i class="bi bi-lock"></i>
+                </a>
+            <?php endif; ?>
             <?php if ($userId && canDelete($userRole, $userId == $topic['user_id'], $topicAuthorRole)): ?>
                 <a href="?id=<?= $id ?>&delete_topic=1"
                    class="btn btn-sm btn-outline-danger"
@@ -165,7 +261,7 @@ $posts = $posts->fetchAll();
         <div class="card mb-3">
             <div class="row g-0">
                 <div class="col-md-2 bg-light border-end text-center p-3">
-                    <div class="fw-bold"><?= htmlspecialchars($post['username']) ?></div>
+                    <a href="/projet/user/profile.php?id=<?= $post['user_id'] ?>" class="fw-bold text-decoration-none"><?= htmlspecialchars($post['username']) ?></a>
                     <small class="text-muted d-block"><?= $post['user_posts'] ?> messages</small>
                     <small class="text-muted d-block">
                         <?php
@@ -177,15 +273,75 @@ $posts = $posts->fetchAll();
                 </div>
                 <div class="col-md-10">
                     <div class="card-body">
-                        <p class="card-text"><?= nl2br(htmlspecialchars($post['content'])) ?></p>
+                        <?php if (isset($_GET['edit_post']) && (int)$_GET['edit_post'] === $post['id'] && $userId == $post['user_id']): ?>
+                            <form method="POST" action="?id=<?= $id ?>&edit_post=<?= $post['id'] ?>">
+                                <textarea name="edit_content" class="form-control mb-2" rows="4" required><?= htmlspecialchars($post['content']) ?></textarea>
+                                <div class="d-flex gap-2">
+                                    <button type="submit" class="btn btn-success btn-sm"><i class="bi bi-check-lg me-1"></i>Sauvegarder</button>
+                                    <a href="?id=<?= $id ?>" class="btn btn-secondary btn-sm">Annuler</a>
+                                </div>
+                            </form>
+                        <?php else: ?>
+                            <p class="card-text"><?= nl2br(htmlspecialchars($post['content'])) ?></p>
+                        <?php endif; ?>
                         <div class="d-flex justify-content-between align-items-center mt-2">
-                            <small class="text-muted"><?= date('d/m/Y à H:i', strtotime($post['created_at'])) ?></small>
-                            <?php if ($userId && canDelete($userRole, $userId == $post['user_id'], $post['author_role'])): ?>
-                                <a href="?id=<?= $id ?>&delete_post=<?= $post['id'] ?>"
-                                   class="btn btn-sm btn-outline-danger"
-                                   onclick="return confirm('Supprimer ce message ?')">
-                                    <i class="bi bi-trash"></i>
-                                </a>
+                            <div>
+                                <small class="text-muted"><?= date('d/m/Y à H:i', strtotime($post['created_at'])) ?></small>
+                                <?php if ($post['updated_at'] !== $post['created_at']): ?>
+                                    <small class="text-muted fst-italic ms-2">(modifié le <?= date('d/m/Y à H:i', strtotime($post['updated_at'])) ?>)</small>
+                                <?php endif; ?>
+                            </div>
+                            <div class="d-flex gap-1">
+                                <?php if ($userId == $post['user_id'] && !isset($_GET['edit_post'])): ?>
+                                    <a href="?id=<?= $id ?>&edit_post=<?= $post['id'] ?>"
+                                       class="btn btn-sm btn-outline-secondary" title="Modifier">
+                                        <i class="bi bi-pencil"></i>
+                                    </a>
+                                <?php endif; ?>
+                                <?php if ($userId && $userId != $post['user_id']): ?>
+                                    <button class="btn btn-sm btn-outline-warning" title="Signaler"
+                                            data-bs-toggle="modal" data-bs-target="#reportModal<?= $post['id'] ?>">
+                                        <i class="bi bi-flag"></i>
+                                    </button>
+                                <?php endif; ?>
+                                <?php if ($userId && canDelete($userRole, $userId == $post['user_id'], $post['author_role'])): ?>
+                                    <a href="?id=<?= $id ?>&delete_post=<?= $post['id'] ?>"
+                                       class="btn btn-sm btn-outline-danger"
+                                       onclick="return confirm('Supprimer ce message ?')">
+                                        <i class="bi bi-trash"></i>
+                                    </a>
+                                <?php endif; ?>
+                            </div>
+                            <?php if ($userId && $userId != $post['user_id']): ?>
+                            <!-- Modal signalement -->
+                            <div class="modal fade" id="reportModal<?= $post['id'] ?>" tabindex="-1">
+                                <div class="modal-dialog">
+                                    <div class="modal-content">
+                                        <form method="POST" action="?id=<?= $id ?>&report_post=<?= $post['id'] ?>">
+                                            <div class="modal-header">
+                                                <h5 class="modal-title"><i class="bi bi-flag me-2"></i>Signaler ce message</h5>
+                                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <p class="text-muted small">Message de <strong><?= htmlspecialchars($post['username']) ?></strong></p>
+                                                <label class="form-label fw-bold">Raison du signalement</label>
+                                                <select name="report_reason" class="form-select" required>
+                                                    <option value="">-- Choisir --</option>
+                                                    <option value="Spam ou publicité">Spam ou publicité</option>
+                                                    <option value="Contenu offensant / harcèlement">Contenu offensant / harcèlement</option>
+                                                    <option value="Arnaque / scam">Arnaque / scam</option>
+                                                    <option value="Contenu inapproprié">Contenu inapproprié</option>
+                                                    <option value="Autre">Autre</option>
+                                                </select>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                                                <button type="submit" class="btn btn-warning"><i class="bi bi-flag me-1"></i>Signaler</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
                             <?php endif; ?>
                         </div>
                     </div>

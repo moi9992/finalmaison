@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS trades (
     description   TEXT         DEFAULT NULL,
     price_fg      INT UNSIGNED NOT NULL DEFAULT 0,
     status        ENUM('open','closed','traded') NOT NULL DEFAULT 'open',
+    bumped_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -126,6 +127,7 @@ CREATE TABLE IF NOT EXISTS reputation (
     rating        ENUM('positive','neutral','negative') NOT NULL,
     comment       TEXT         DEFAULT NULL,
     created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_rep_per_trade (from_user_id, to_user_id, trade_id),
     FOREIGN KEY (from_user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (to_user_id)   REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (trade_id)     REFERENCES trades(id) ON DELETE SET NULL
@@ -140,8 +142,9 @@ CREATE TABLE IF NOT EXISTS messages (
     to_user_id    INT UNSIGNED NOT NULL,
     subject       VARCHAR(200) NOT NULL,
     content       TEXT         NOT NULL,
-    is_read       TINYINT(1)   NOT NULL DEFAULT 0,
-    created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    is_read          TINYINT(1)   NOT NULL DEFAULT 0,
+    is_staff_message TINYINT(1)   NOT NULL DEFAULT 0,
+    created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (from_user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (to_user_id)   REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
@@ -165,13 +168,30 @@ CREATE TABLE IF NOT EXISTS notifications (
     id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     user_id       INT UNSIGNED NOT NULL,
     from_user_id  INT UNSIGNED NOT NULL,
-    type          ENUM('topic_reply','trade_offer') NOT NULL,
+    type          ENUM('topic_reply','trade_offer','report') NOT NULL,
     reference_id  INT UNSIGNED NOT NULL,
     message       VARCHAR(255) NOT NULL,
     is_read       TINYINT(1)   NOT NULL DEFAULT 0,
     created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id)      REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (from_user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------
+-- Table : reports (signalements)
+-- ---------------------------------------------
+CREATE TABLE IF NOT EXISTS reports (
+    id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    reporter_id   INT UNSIGNED NOT NULL,
+    type          ENUM('post','user','trade') NOT NULL,
+    target_id     INT UNSIGNED NOT NULL,
+    reason        TEXT         NOT NULL,
+    status        ENUM('pending','resolved','dismissed') NOT NULL DEFAULT 'pending',
+    resolved_by   INT UNSIGNED DEFAULT NULL,
+    resolved_at   DATETIME     DEFAULT NULL,
+    created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (reporter_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (resolved_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 -- ---------------------------------------------

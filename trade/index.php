@@ -40,7 +40,7 @@ $trades = $pdo->prepare("
     FROM trades t
     JOIN users u ON t.user_id = u.id
     WHERE $whereSQL
-    ORDER BY t.created_at DESC
+    ORDER BY t.bumped_at DESC
     LIMIT $perPage OFFSET $offset
 ");
 $trades->execute($params);
@@ -120,7 +120,7 @@ $games = $pdo->query("SELECT DISTINCT game FROM trades ORDER BY game")->fetchAll
                             <span class="fw-bold"><?= htmlspecialchars($trade['title']) ?></span>
                             <br>
                             <small class="text-muted">
-                                <?= htmlspecialchars($trade['game']) ?> — par <?= htmlspecialchars($trade['username']) ?>
+                                <?= htmlspecialchars($trade['game']) ?> — par <span class="text-info" onclick="event.preventDefault(); window.location='/projet/user/profile.php?id=<?= $trade['user_id'] ?>';"><?= htmlspecialchars($trade['username']) ?></span>
                                 — <?= date('d/m/Y', strtotime($trade['created_at'])) ?>
                             </small>
                         </div>

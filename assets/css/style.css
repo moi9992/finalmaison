@@ -173,6 +173,7 @@ a:hover { color: var(--gold); }
   box-shadow: 0 0 12px rgba(79,195,255,0.2);
 }
 .form-control::placeholder { color: var(--muted); }
+.placeholder-light::placeholder { color: rgba(255,255,255,0.65) !important; }
 .input-group-text {
   background: var(--panel2);
   border-color: var(--border);
@@ -182,10 +183,12 @@ a:hover { color: var(--gold); }
 textarea.form-control { resize: vertical; }
 
 /* ── TABLES ──────────────────────────────────────── */
-.table { color: var(--text); }
+.table { color: var(--text); --bs-table-bg: var(--panel); --bs-table-color: var(--text); }
 .table-dark { background: var(--panel); }
-.table-striped > tbody > tr:nth-of-type(odd) > * { background: rgba(255,255,255,0.02); color: var(--text); }
-.table-hover > tbody > tr:hover > * { background: var(--panel2); color: var(--white); }
+.table > thead > tr > * { background: var(--panel) !important; }
+.table > tbody > tr > * { background: var(--panel) !important; color: var(--text); border-color: var(--border) !important; transition: background 0.2s ease; }
+.table-striped > tbody > tr:nth-of-type(odd) > * { background: var(--panel2) !important; color: var(--text); }
+.table-hover > tbody > tr:hover > * { background: rgba(255,255,255,0.1) !important; color: var(--white); }
 thead th { color: var(--muted) !important; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; border-bottom: 1px solid var(--border) !important; }
 
 /* ── BADGES ──────────────────────────────────────── */
@@ -282,5 +285,6 @@ hr { border-color: var(--border); }
 }
 
 .main {
-  height: 100vh;
+  min-height: 100vh;
+  flex: 1;
 }

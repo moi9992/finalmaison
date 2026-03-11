@@ -27,6 +27,33 @@ if (isset($_GET['close']) && $userId == $trade['user_id']) {
     exit;
 }
 
+// Édition de l'annonce (propriétaire uniquement, tant que open)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_trade']) && $userId == $trade['user_id'] && $trade['status'] === 'open') {
+    $newTitle = trim($_POST['edit_title'] ?? '');
+    $newDesc  = trim($_POST['edit_description'] ?? '');
+    $newPrice = (int)($_POST['edit_price'] ?? 0);
+    if (!empty($newTitle) && $newPrice >= 0) {
+        $pdo->prepare("UPDATE trades SET title = ?, description = ?, price_fg = ? WHERE id = ?")->execute([$newTitle, $newDesc, $newPrice, $id]);
+        header("Location: trade.php?id=$id&edited=1");
+        exit;
+    }
+}
+
+// Bump de l'annonce (propriétaire uniquement, 1x par heure)
+if (isset($_GET['bump']) && $userId == $trade['user_id'] && $trade['status'] === 'open') {
+    $lastBump = strtotime($trade['bumped_at'] ?? $trade['created_at']);
+    $cooldown = 3600; // 1 heure
+    if (time() - $lastBump >= $cooldown) {
+        $pdo->prepare("UPDATE trades SET bumped_at = NOW() WHERE id = ?")->execute([$id]);
+        header("Location: trade.php?id=$id&bumped=1");
+        exit;
+    } else {
+        $remaining = $cooldown - (time() - $lastBump);
+        $mins = ceil($remaining / 60);
+        $error = "Tu pourras bump dans $mins minute" . ($mins > 1 ? 's' : '') . ".";
+    }
+}
+
 // Suppression de l'annonce (propriétaire, modo > user, admin > tous)
 function canDeleteTrade($currentRole, $isOwner, $targetRole) {
     if ($currentRole === 'admin') return true;
@@ -71,6 +98,20 @@ if (isset($_GET['accept_offer'])) {
             // Mettre à jour la session si c'est le vendeur connecté
             $_SESSION['user']['forum_gold'] = ($_SESSION['user']['forum_gold'] ?? 0) + $offer['amount_fg'];
 
+            // Notifier l'acheteur que son offre a été acceptée
+            $notifMsg = htmlspecialchars($_SESSION['user']['username'] ?? $_SESSION['user']['login']) . ' a accepté ton offre sur "' . mb_strimwidth($trade['title'], 0, 50, '...') . '" (' . number_format($offer['amount_fg']) . ' J)';
+            $pdo->prepare("INSERT INTO notifications (user_id, from_user_id, type, reference_id, message) VALUES (?, ?, 'trade_offer', ?, ?)")
+                ->execute([$offer['user_id'], $userId, $id, $notifMsg]);
+
+            // Notifier les autres offreurs que leur offre a été refusée (car trade complété)
+            $otherOffers = $pdo->prepare("SELECT DISTINCT user_id FROM trade_offers WHERE trade_id = ? AND id != ? AND user_id != ?");
+            $otherOffers->execute([$id, $offerId, $userId]);
+            foreach ($otherOffers->fetchAll() as $other) {
+                $declineMsg = 'Ton offre sur "' . mb_strimwidth($trade['title'], 0, 50, '...') . '" a été refusée (trade complété)';
+                $pdo->prepare("INSERT INTO notifications (user_id, from_user_id, type, reference_id, message) VALUES (?, ?, 'trade_offer', ?, ?)")
+                    ->execute([$other['user_id'], $userId, $id, $declineMsg]);
+            }
+
             $success = "Offre acceptée ! " . $offer['amount_fg'] . " J transférés sur ton compte.";
         } else {
             $error = "L'acheteur n'a pas assez de J.";
@@ -86,7 +127,19 @@ if (isset($_GET['accept_offer'])) {
 if (isset($_GET['decline_offer'])) {
     $offerId = (int)$_GET['decline_offer'];
     if ($userId == $trade['user_id']) {
+        // Récupérer l'offre pour notifier l'offreur
+        $declinedOffer = $pdo->prepare("SELECT * FROM trade_offers WHERE id = ? AND trade_id = ?");
+        $declinedOffer->execute([$offerId, $id]);
+        $declinedOffer = $declinedOffer->fetch();
+
         $pdo->prepare("UPDATE trade_offers SET status = 'declined' WHERE id = ? AND trade_id = ?")->execute([$offerId, $id]);
+
+        // Notifier l'offreur
+        if ($declinedOffer) {
+            $notifMsg = htmlspecialchars($_SESSION['user']['username'] ?? $_SESSION['user']['login']) . ' a refusé ton offre sur "' . mb_strimwidth($trade['title'], 0, 50, '...') . '"';
+            $pdo->prepare("INSERT INTO notifications (user_id, from_user_id, type, reference_id, message) VALUES (?, ?, 'trade_offer', ?, ?)")
+                ->execute([$declinedOffer['user_id'], $userId, $id, $notifMsg]);
+        }
     }
     header("Location: trade.php?id=$id");
     exit;
@@ -100,8 +153,8 @@ if (isset($_GET['cancel_offer'])) {
     exit;
 }
 
-// Soumettre ou modifier une offre
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['isLog']) && $_SESSION['isLog']) {
+// Soumettre ou modifier une offre (ignorer si c'est un POST de réputation)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['isLog']) && $_SESSION['isLog'] && !isset($_POST['rep_rating'])) {
     $amount_fg = (int)($_POST['amount_fg'] ?? 0);
     $message   = trim($_POST['message'] ?? '');
     $offer_id  = (int)($_POST['offer_id'] ?? 0); // 0 = nouvelle offre, >0 = modification
@@ -147,6 +200,77 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['isLog']) && $_SESS
     }
 }
 
+// === SYSTÈME DE RÉPUTATION ===
+// Trouver l'offre acceptée pour ce trade
+$acceptedOffer = null;
+if ($trade['status'] === 'traded') {
+    $stmt = $pdo->prepare("SELECT o.*, u.username FROM trade_offers o JOIN users u ON o.user_id = u.id WHERE o.trade_id = ? AND o.status = 'accepted' LIMIT 1");
+    $stmt->execute([$id]);
+    $acceptedOffer = $stmt->fetch();
+}
+
+// Déterminer qui peut noter qui
+$canLeaveRep = false;
+$repTargetId = null;
+$repTargetName = '';
+if ($acceptedOffer && $userId) {
+    // Le vendeur note l'acheteur
+    if ($userId == $trade['user_id']) {
+        $repTargetId = $acceptedOffer['user_id'];
+        $repTargetName = $acceptedOffer['username'];
+    }
+    // L'acheteur note le vendeur
+    elseif ($userId == $acceptedOffer['user_id']) {
+        $repTargetId = $trade['user_id'];
+        $repTargetName = $trade['username'];
+    }
+
+    if ($repTargetId) {
+        // Vérifier si pas déjà noté
+        $alreadyRated = $pdo->prepare("SELECT COUNT(*) FROM reputation WHERE from_user_id = ? AND to_user_id = ? AND trade_id = ?");
+        $alreadyRated->execute([$userId, $repTargetId, $id]);
+        $canLeaveRep = $alreadyRated->fetchColumn() == 0;
+    }
+}
+
+// Soumettre un avis de réputation
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rep_rating']) && $canLeaveRep) {
+    $repRating = $_POST['rep_rating'];
+    $repComment = trim($_POST['rep_comment'] ?? '');
+
+    if (in_array($repRating, ['positive', 'neutral', 'negative'])) {
+        $pdo->prepare("INSERT INTO reputation (from_user_id, to_user_id, trade_id, rating, comment) VALUES (?, ?, ?, ?, ?)")
+            ->execute([$userId, $repTargetId, $id, $repRating, $repComment]);
+
+        // Mettre à jour le score de réputation
+        $delta = match($repRating) {
+            'positive' => 1,
+            'negative' => -1,
+            default    => 0
+        };
+        if ($delta !== 0) {
+            $pdo->prepare("UPDATE users SET reputation = reputation + ? WHERE id = ?")->execute([$delta, $repTargetId]);
+        }
+
+        $canLeaveRep = false;
+        $success = "Avis laissé avec succès !";
+    }
+}
+
+// Charger les avis existants pour ce trade
+$tradeReps = [];
+if ($trade['status'] === 'traded') {
+    $stmt = $pdo->prepare("
+        SELECT r.*, u.username AS from_username
+        FROM reputation r
+        JOIN users u ON r.from_user_id = u.id
+        WHERE r.trade_id = ?
+        ORDER BY r.created_at ASC
+    ");
+    $stmt->execute([$id]);
+    $tradeReps = $stmt->fetchAll();
+}
+
 // Charger les offres
 $offers = $pdo->prepare("
     SELECT o.*, u.username
@@ -189,6 +313,12 @@ if ($userId && $userId != $trade['user_id']) {
         </ol>
     </nav>
 
+    <?php if (isset($_GET['bumped'])): ?>
+        <div class="alert alert-success">Annonce bumpée ! Elle remonte en haut de la liste.</div>
+    <?php endif; ?>
+    <?php if (isset($_GET['edited'])): ?>
+        <div class="alert alert-success">Annonce modifiée avec succès !</div>
+    <?php endif; ?>
     <?php if (!empty($success)): ?>
         <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
     <?php endif; ?>
@@ -213,6 +343,18 @@ if ($userId && $userId != $trade['user_id']) {
             <?php if ($userId && $trade['status'] === 'open'): ?>
                 <div class="d-flex gap-2">
                     <?php if ($userId == $trade['user_id']): ?>
+                        <?php
+                        $lastBump = strtotime($trade['bumped_at'] ?? $trade['created_at']);
+                        $canBump = (time() - $lastBump) >= 3600;
+                        ?>
+                        <a href="?id=<?= $id ?>&edit=1" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-pencil me-1"></i>Modifier
+                        </a>
+                        <a href="?id=<?= $id ?>&bump=1"
+                           class="btn btn-sm <?= $canBump ? 'btn-warning' : 'btn-outline-secondary disabled' ?>"
+                           <?= $canBump ? '' : 'aria-disabled="true"' ?>>
+                            <i class="bi bi-arrow-up-circle me-1"></i>Bump
+                        </a>
                         <a href="?id=<?= $id ?>&close=1" class="btn btn-sm btn-outline-secondary"
                            onclick="return confirm('Fermer cette annonce ?')">Fermer</a>
                     <?php endif; ?>
@@ -224,23 +366,60 @@ if ($userId && $userId != $trade['user_id']) {
             <?php endif; ?>
         </div>
         <div class="card-body">
-            <h4 class="fw-bold"><?= htmlspecialchars($trade['title']) ?></h4>
-            <p class="text-muted mb-3"><?= nl2br(htmlspecialchars($trade['description'] ?? '')) ?></p>
-            <div class="d-flex gap-4">
-                <div>
-                    <small class="text-muted">Prix demandé</small><br>
-                    <span class="fs-5 fw-bold text-warning"><?= number_format($trade['price_fg']) ?> J</span>
+            <?php if (isset($_GET['edit']) && $userId == $trade['user_id'] && $trade['status'] === 'open'): ?>
+                <form method="POST">
+                    <input type="hidden" name="edit_trade" value="1">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Titre</label>
+                        <input type="text" name="edit_title" class="form-control" value="<?= htmlspecialchars($trade['title']) ?>" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Description</label>
+                        <textarea name="edit_description" class="form-control" rows="4"><?= htmlspecialchars($trade['description'] ?? '') ?></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Prix en J</label>
+                        <div class="input-group" style="max-width:250px">
+                            <input type="number" name="edit_price" class="form-control" min="0" value="<?= $trade['price_fg'] ?>" required>
+                            <span class="input-group-text text-warning fw-bold">J</span>
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-success"><i class="bi bi-check-lg me-1"></i>Sauvegarder</button>
+                        <a href="?id=<?= $id ?>" class="btn btn-secondary">Annuler</a>
+                    </div>
+                </form>
+            <?php else: ?>
+                <h4 class="fw-bold"><?= htmlspecialchars($trade['title']) ?></h4>
+                <p class="text-muted mb-3"><?= nl2br(htmlspecialchars($trade['description'] ?? '')) ?></p>
+                <div class="d-flex gap-4 flex-wrap">
+                    <div>
+                        <small class="text-muted">Prix demandé</small><br>
+                        <span class="fs-5 fw-bold text-warning"><?= number_format($trade['price_fg']) ?> J</span>
+                    </div>
+                    <div>
+                        <small class="text-muted">Vendeur</small><br>
+                        <a href="/projet/user/profile.php?id=<?= $trade['user_id'] ?>" class="fw-bold text-info text-decoration-none"><?= htmlspecialchars($trade['username']) ?></a>
+                        <small class="text-muted ms-1">(réputation: <?= $trade['reputation'] ?>)</small>
+                    </div>
+                    <div>
+                        <small class="text-muted">Publié le</small><br>
+                        <span><?= date('d/m/Y à H:i', strtotime($trade['created_at'])) ?></span>
+                    </div>
+                    <?php if (isset($trade['bumped_at']) && $trade['bumped_at'] !== $trade['created_at']): ?>
+                    <div>
+                        <small class="text-muted">Dernier bump</small><br>
+                        <span><?= date('d/m/Y à H:i', strtotime($trade['bumped_at'])) ?></span>
+                    </div>
+                    <?php endif; ?>
+                    <?php if ($trade['updated_at'] !== $trade['created_at']): ?>
+                    <div>
+                        <small class="text-muted">Modifié le</small><br>
+                        <span><?= date('d/m/Y à H:i', strtotime($trade['updated_at'])) ?></span>
+                    </div>
+                    <?php endif; ?>
                 </div>
-                <div>
-                    <small class="text-muted">Vendeur</small><br>
-                    <span class="fw-bold"><?= htmlspecialchars($trade['username']) ?></span>
-                    <small class="text-muted ms-1">(réputation: <?= $trade['reputation'] ?>)</small>
-                </div>
-                <div>
-                    <small class="text-muted">Publié le</small><br>
-                    <span><?= date('d/m/Y à H:i', strtotime($trade['created_at'])) ?></span>
-                </div>
-            </div>
+            <?php endif; ?>
         </div>
     </div>
 
@@ -356,6 +535,86 @@ if ($userId && $userId != $trade['user_id']) {
                 </div>
             <?php endif; ?>
         </div>
+
+    </div>
+
+    <?php if ($trade['status'] === 'traded'): ?>
+    <!-- Section Réputation -->
+    <div class="mt-4">
+        <h5 class="fw-bold mb-3"><i class="bi bi-star me-2"></i>Avis sur ce trade</h5>
+
+        <?php if (!empty($tradeReps)): ?>
+            <?php foreach ($tradeReps as $rep): ?>
+                <?php
+                $repIcon = match($rep['rating']) {
+                    'positive' => ['bi-hand-thumbs-up-fill text-success', 'Positif'],
+                    'negative' => ['bi-hand-thumbs-down-fill text-danger', 'Négatif'],
+                    default    => ['bi-dash-circle-fill text-muted', 'Neutre']
+                };
+                ?>
+                <div class="card mb-2">
+                    <div class="card-body py-2">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <i class="bi <?= $repIcon[0] ?> me-1"></i>
+                                <strong><?= $repIcon[1] ?></strong>
+                                <span class="text-muted ms-2">par
+                                    <a href="/projet/user/profile.php?id=<?= $rep['from_user_id'] ?>">
+                                        <?= htmlspecialchars($rep['from_username']) ?>
+                                    </a>
+                                </span>
+                            </div>
+                            <small class="text-muted"><?= date('d/m/Y à H:i', strtotime($rep['created_at'])) ?></small>
+                        </div>
+                        <?php if ($rep['comment']): ?>
+                            <p class="mb-0 mt-1"><?= htmlspecialchars($rep['comment']) ?></p>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        <?php else: ?>
+            <p class="text-muted">Aucun avis pour le moment.</p>
+        <?php endif; ?>
+
+        <?php if ($canLeaveRep): ?>
+            <div class="card mt-3">
+                <div class="card-header fw-bold">
+                    <i class="bi bi-star me-1"></i>Laisser un avis pour <?= htmlspecialchars($repTargetName) ?>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Note</label>
+                            <div class="btn-group w-100" role="group">
+                                <input type="radio" class="btn-check" name="rep_rating" id="rep_positive" value="positive" required>
+                                <label class="btn btn-outline-success" for="rep_positive">
+                                    <i class="bi bi-hand-thumbs-up me-1"></i>Positif
+                                </label>
+                                <input type="radio" class="btn-check" name="rep_rating" id="rep_neutral" value="neutral">
+                                <label class="btn btn-outline-secondary" for="rep_neutral">
+                                    <i class="bi bi-dash-circle me-1"></i>Neutre
+                                </label>
+                                <input type="radio" class="btn-check" name="rep_rating" id="rep_negative" value="negative">
+                                <label class="btn btn-outline-danger" for="rep_negative">
+                                    <i class="bi bi-hand-thumbs-down me-1"></i>Négatif
+                                </label>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Commentaire (optionnel)</label>
+                            <textarea name="rep_comment" class="form-control" rows="2" placeholder="Ex: Échange rapide, je recommande !"></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Envoyer l'avis</button>
+                    </form>
+                </div>
+            </div>
+        <?php elseif ($userId && $repTargetId === null && ($userId == $trade['user_id'] || ($acceptedOffer && $userId == $acceptedOffer['user_id']))): ?>
+            <div class="alert alert-success mt-3">
+                <i class="bi bi-check-circle me-1"></i>Tu as déjà laissé un avis pour ce trade.
+            </div>
+        <?php endif; ?>
+    </div>
+    <?php endif; ?>
 
     </div>
 </div>
