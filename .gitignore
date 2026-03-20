@@ -1,0 +1,4 @@
+config/db.php
+assets/uploads/avatars/*
+!assets/uploads/avatars/.gitkeep
+.claude/
