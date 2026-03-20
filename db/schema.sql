@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
     avatar        VARCHAR(255) DEFAULT NULL,
     bio           TEXT         DEFAULT NULL,
     forum_gold    INT UNSIGNED NOT NULL DEFAULT 0,
+    raffle_tickets INT UNSIGNED NOT NULL DEFAULT 0,
     reputation    INT          NOT NULL DEFAULT 0,
     role          ENUM('user','moderator','admin') NOT NULL DEFAULT 'user',
     is_banned     TINYINT(1)   NOT NULL DEFAULT 0,

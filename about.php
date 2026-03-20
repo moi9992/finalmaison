@@ -27,7 +27,7 @@ session_start();
         <div class="card-body">
             <p>
                 <strong>HYPERBUSINESS</strong> est une plateforme communautaire dédiée aux joueurs de jeux vidéo en quête d'échanges, de discussions et de bonnes affaires.
-                Inspiré de d2jsp, le site repose sur une monnaie virtuelle — le <strong>J (Forum Gold)</strong> — utilisée pour acheter, vendre et négocier des items de jeu entre membres.
+                Inspiré de d2jsp, le site repose sur une monnaie virtuelle — le <strong>Julienton (J)</strong> — utilisée pour acheter, vendre et négocier des items de jeu entre membres.
             </p>
             <p>
                 Tu peux y trouver :

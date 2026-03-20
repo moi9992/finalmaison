@@ -429,7 +429,7 @@ if ($userId && $userId != $trade['user_id']) {
                                         <?php else: ?>
                                             <i class="bi bi-person-circle"></i>
                                         <?php endif; ?>
-                                        <?= htmlspecialchars($offer['username']) ?>
+                                        <a href="/finalmaison-main/user/profile.php?id=<?= $offer['user_id'] ?>" class="text-white text-decoration-none"><?= htmlspecialchars($offer['username']) ?></a>
                                     </span>
                                     propose <span class="text-warning fw-bold"><?= number_format($offer['amount_fg']) ?> J</span>
                                     <?php if ($offer['message']): ?>

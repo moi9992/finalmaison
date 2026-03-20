@@ -86,7 +86,7 @@ $users = $users->fetchAll();
                     <th>Pseudo</th>
                     <th>Email</th>
                     <th>Rôle</th>
-                    <th class="text-end">FG</th>
+                    <th class="text-end">J</th>
                     <th class="text-center">Topics</th>
                     <th class="text-center">Trades</th>
                     <th>Inscrit le</th>
@@ -138,7 +138,7 @@ $users = $users->fetchAll();
                                             <i class="bi bi-slash-circle"></i>
                                         </a>
                                     <?php endif; ?>
-                                    <a href="/finalmaison-main/admin/give_fg.php" class="btn btn-sm btn-warning" title="Donner des J">
+                                    <a href="/finalmaison-main/admin/give_fg.php" class="btn btn-sm btn-warning" title="Donner des Julietons">
                                         <i class="bi bi-coin"></i>
                                     </a>
                                 </div>

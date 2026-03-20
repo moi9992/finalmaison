@@ -23,7 +23,7 @@ $aliases = [
     'dad'       => 'dark and darker',
     'osrs'      => 'old school runescape',
     'bj'        => 'blackjack',
-    'fg'        => 'forum gold',
+    'fg'        => 'julienton',
 ];
 $qLower = strtolower($q);
 $expanded = $aliases[$qLower] ?? null;

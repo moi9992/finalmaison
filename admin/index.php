@@ -63,7 +63,7 @@ $lastUsers = $pdo->query("SELECT id, username, email, role, forum_gold, created_
     <h5 class="fw-bold mb-3">Actions rapides</h5>
     <div class="d-flex gap-2 mb-5">
         <a href="/finalmaison-main/admin/give_fg.php" class="btn btn-warning">
-            <i class="bi bi-coin me-1"></i>Donner des FG
+            <i class="bi bi-coin me-1"></i>Donner des Julietons
         </a>
         <a href="/finalmaison-main/admin/users.php" class="btn btn-primary">
             <i class="bi bi-people me-1"></i>Gérer les membres
@@ -88,7 +88,7 @@ $lastUsers = $pdo->query("SELECT id, username, email, role, forum_gold, created_
                     <th>Pseudo</th>
                     <th>Email</th>
                     <th>Rôle</th>
-                    <th class="text-end">FG</th>
+                    <th class="text-end">J</th>
                     <th>Inscrit le</th>
                 </tr>
             </thead>

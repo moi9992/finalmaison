@@ -315,3 +315,54 @@ hr { border-color: var(--border); }
 .msg-a         { background: #1a1d23; border-left: 3px solid #0d6efd; }
 .msg-b         { background: #1a1d23; border-left: 3px solid #6c757d; }
 .msg-staff-view { background: #1a1d23; border-left: 3px solid #dc3545; }
+
+/* ── RESPONSIVE ──────────────────────────────────── */
+@media (max-width: 991px) {
+  /* Navbar burger ouvert */
+  .navbar-collapse {
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    padding: 12px 0;
+    margin-top: 8px;
+  }
+  .navbar-collapse .nav-link { padding: 10px 16px !important; }
+  .navbar-collapse form { padding: 10px 16px; }
+  .navbar-collapse form .form-control { max-width: 100% !important; }
+
+  /* Tables scrollables */
+  table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
+
+  /* Hero */
+  .hero-section { padding: 40px 16px; }
+}
+
+@media (max-width: 767px) {
+  /* Stats bar */
+  .stats-bar .col-4 { text-align: center; }
+  .stats-bar .stat-val { font-size: 24px; }
+
+  /* Cards */
+  .card { margin-bottom: 12px; }
+
+  /* Profile - colonnes */
+  .col-md-4, .col-md-8 { width: 100% !important; }
+
+  /* Footer */
+  footer .row > div { margin-bottom: 16px; text-align: center; }
+  footer .row > div:last-child { margin-bottom: 0; }
+
+  /* Breadcrumb */
+  .breadcrumb { font-size: 13px; }
+
+  /* Pagination */
+  .pagination { flex-wrap: wrap; gap: 4px; }
+
+  /* Boutons côte à côte sur les trades */
+  .btn-group-sm .btn { font-size: 12px; padding: 4px 8px; }
+}
+
+@media (max-width: 480px) {
+  .navbar-brand { font-size: 22px; }
+  .hero-section h1 { font-size: 42px; }
+  .container { padding-left: 12px; padding-right: 12px; }
+}
